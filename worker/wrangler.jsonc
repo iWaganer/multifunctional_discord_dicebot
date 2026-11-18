@@ -1,0 +1,8 @@
+{
+	"name": "dicebot-worker",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-06",
+	"observability": {
+		"enabled": true,
+	},
+}

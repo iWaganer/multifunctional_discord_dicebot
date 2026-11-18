@@ -1,9 +1,11 @@
+
 import discord
 from discord import app_commands
-from discord.ext import commands
 import os
 from dotenv import load_dotenv
 import random
+import re
+import operator
 
 load_dotenv()
 
@@ -13,34 +15,13 @@ DISCORD_TOKEN = os.getenv('dicebot_token')
 client = discord.Client(intents=discord.Intents.all())
 tree = app_commands.CommandTree(client)
 
+
 # bot起動時の処理
 @client.event
 async def on_ready():
     print('ログインしました')
     await tree.sync()
 
-# # メッセージ受信時の処理
-# @client.event
-# async def on_message(message):
-#     # メッセージ送信者がボットの場合は無視する
-#     if message.author.bot:
-#         return
-
-#     # メッセージの内容をオウム返しする
-#     received_message = message.content # 受信したメッセージ
-#     print(received_message) # 受信したメッセージを出力
-#     if received_message == "ya":
-#         await message.channel.send(received_message) # 受信したメッセージを送信
-#     return
-
-# client.run(DISCORD_TOKEN)
-
-index_of_d = []
-index_of_operator = []
-list_of_operator = []
-elements_of_roll = []
-result_of_roll_show = []
-result_of_roll_calc = []
 
 # ダイスを振る関数
 def roll_dice(num_of_dice, num_of_faces):
@@ -50,219 +31,246 @@ def roll_dice(num_of_dice, num_of_faces):
         results.append(result)
     return results
 
+
+# ロールコマンドの前処理
+def normalize_roll(roll):
+    roll = roll.replace(' ', '').replace('　', '')
+
+    replacements = {
+        'D': 'd',
+        'Ｄ': 'd',
+        'ｄ': 'd',
+        '＊': '*',
+        '／': '/',
+        '＋': '+',
+        '－': '-',
+        '−': '-',
+        '·': '*',
+        '・': '*',
+        '﹡': '*',
+        '⁎': '*',
+        'x': '*',
+        '×': '*',
+        '÷': '/'
+    }
+
+    for before, after in replacements.items():
+        roll = roll.replace(before, after)
+
+    return roll
+
+
+# 演算子の優先順位を考慮して計算
+def calculate_expression(values, operators):
+    total = 0
+    current = values[0]
+    sign = '+'
+
+    for op, value in zip(operators, values[1:]):
+        if op == '*':
+            current *= value
+        elif op == '/':
+            current /= value
+        else:
+            total += current if sign == '+' else -current
+            sign = op
+            current = value
+
+    total += current if sign == '+' else -current
+
+    return total
+
+
+# ダイス式の解析と計算
+def evaluate_roll(roll):
+    roll = normalize_roll(roll)
+
+    # 演算子で分割
+    parts = re.split(r'([+\-*/])', roll)
+    elements = parts[::2]
+    operators = parts[1::2]
+
+    if not elements or any(not element for element in elements):
+        raise ValueError("ロール形式が不正です")
+
+    result_of_roll_show = []
+    result_of_roll_calc = []
+
+    # 各要素を計算
+    for element in elements:
+        if 'd' in element:
+            if element.count('d') != 1:
+                raise ValueError("ダイス形式が不正です")
+
+            dice_count, face_count = element.split('d')
+
+            num_of_dice = int(dice_count) if dice_count else 1
+            num_of_faces = int(face_count)
+
+            if not (1 <= num_of_dice <= 1000) or num_of_faces <= 0:
+                raise ValueError("ダイスの個数または面数が不正です")
+
+            roll_results = roll_dice(num_of_dice, num_of_faces)
+            roll_total = sum(roll_results)
+
+            result_of_roll_show.append(
+                f"{roll_total}{roll_results}"
+            )
+            result_of_roll_calc.append(roll_total)
+
+        else:
+            value = int(element)
+            result_of_roll_show.append(str(value))
+            result_of_roll_calc.append(value)
+
+    # 最終結果の計算
+    final_result = calculate_expression(
+        result_of_roll_calc, operators
+    )
+
+    # 表示用の式を組み立てる
+    show_message = result_of_roll_show[0]
+
+    for i, op in enumerate(operators):
+        show_message += f" {op} {result_of_roll_show[i + 1]}"
+
+    return final_result, show_message
+
+
 # ロールコマンドの実装
 @tree.command(name="dice_roll", description="ダイスと気がふれるぜ")
-@app_commands.describe(roll="ロールを入力。()演算は非対応", than="上方下方判定", target="目標値")
-async def dice_roll_command(interaction: discord.Interaction, roll: str, than: str = None, target: str = None):
-    # メッセージ送信者がボットの場合は無視する
+@app_commands.describe(
+    roll="ロールを入力。()演算は非対応",
+    than="上方下方判定",
+    target="目標値",
+    times="ロールを繰り返す回数（1～20回）"
+)
+async def dice_roll_command(
+    interaction: discord.Interaction,
+    roll: str,
+    than: str = None,
+    target: str = None,
+    times: int = 1
+):
     if interaction.user.bot:
         return
 
     print("ロールコマンドが実行されました")
-    # メッセージからロールの内容を取得する
-    roll_command = roll
 
-    # ロールコマンドの前処理
-    roll_command = roll_command.replace(' ', '')
-    roll_command = roll_command.replace('　', '')
-    roll_command = roll_command.replace('D', 'd')
-    roll_command = roll_command.replace('Ｄ', 'd')
-    roll_command = roll_command.replace('ｄ', 'd')
-    roll_command = roll_command.replace('＊', '*')
-    roll_command = roll_command.replace('／', '/')
-    roll_command = roll_command.replace('＋', '+')
-    roll_command = roll_command.replace('－', '-')
-    roll_command = roll_command.replace('−', '-')
-    roll_command = roll_command.replace('·', '*')
-    roll_command = roll_command.replace('・', '*')
-    roll_command = roll_command.replace('﹡', '*')
-    roll_command = roll_command.replace('⁎', '*')
-    roll_command = roll_command.replace('x', '*')
-    roll_command = roll_command.replace('×', '*')
-    roll_command = roll_command.replace('÷', '/')
-    print(roll_command)
-    # ロールの内容を解析
+    # 回数の確認
+    if not 1 <= times <= 20:
+        await interaction.response.send_message(
+            "ロール回数は1～20回で指定してください。"
+        )
+        return
+
+    # 上方下方判定用の演算子
+    comparison_operators = {
+        '>': operator.gt,
+        '<': operator.lt,
+        '>=': operator.ge,
+        '<=': operator.le,
+        '≧': operator.ge,
+        '≦': operator.le,
+        '=': operator.eq
+    }
+
+    if than in comparison_operators and target is None:
+        await interaction.response.send_message(
+            "上方下方判定には目標値を指定してください。"
+        )
+        return
+
     try:
-        for i in range(len(roll_command)):
-            if roll_command[i] == 'd':
-                index_of_d.append(i)
-            elif roll_command[i] == '+' or roll_command[i] == '-' or roll_command[i] == '*' or roll_command[i] == '/':
-                index_of_operator.append(i)
-                list_of_operator.append(roll_command[i])
+        results = []
 
-        # ロールの内容を要素に分解
-        if index_of_operator != []:
-            for i in range(len(index_of_operator)):
-                if i == 0:
-                    elements_of_roll.append(roll_command[0:index_of_operator[i]])
-                else:
-                    elements_of_roll.append(roll_command[index_of_operator[i-1]+1:index_of_operator[i]])
-            elements_of_roll.append(roll_command[index_of_operator[-1]+1:])
-        else:
-            elements_of_roll.append(roll_command)
-        print(elements_of_roll)
+        # 指定回数だけロール
+        for i in range(times):
+            final_result, show_message = evaluate_roll(roll)
 
-        # 各要素を計算
-        for element in elements_of_roll:
-            if 'd' in element:
-                num_of_dice = int(element[0:element.index('d')]) if element[0:element.index('d')] != '' else 1
-                num_of_faces = int(element[element.index('d')+1:])
-                roll_results = roll_dice(num_of_dice, num_of_faces)
-                result_of_roll_show.append(f"{sum(roll_results)}{roll_results}")
-                result_of_roll_calc.append(sum(roll_results))
+            print(f"{i + 1}回目: {show_message}")
+            print(f"計算結果: {final_result}")
+
+            # 上方下方判定
+            if than in comparison_operators:
+                target_value, _ = evaluate_roll(target)
+
+                success = comparison_operators[than](
+                    final_result, target_value
+                )
+
+                judge = "成功" if success else "失敗"
+
+                final_result = (
+                    f"{final_result} {than} {target_value} => {judge}"
+                )
+
+            # 結果を組み立てる
+            if times == 1:
+                result_message = f"[{show_message}] => {final_result}"
             else:
-                result_of_roll_show.append(f"{element}")
-                result_of_roll_calc.append(int(element))
-        print(result_of_roll_show)
-        print(result_of_roll_calc)
+                result_message = (
+                    f"{i + 1}回目: [{show_message}] => {final_result}"
+                )
 
-        # 計算結果を組み立てる
-        calculation_expression = str(result_of_roll_calc[0])
-        for i in range(len(list_of_operator)):
-            calculation_expression += f" {list_of_operator[i]} {result_of_roll_calc[i+1]}"
-        print(calculation_expression)
-        final_result = eval(calculation_expression)
-        print(final_result)
+            results.append(result_message)
 
-        show_message = ""
-        for i in range(len(result_of_roll_show)):
-            if i == 0:
-                show_message += result_of_roll_show[i]
-            else:
-                show_message += f" {list_of_operator[i-1]} {result_of_roll_show[i]}"
-        print(show_message)
+        # 結果をまとめて送信
+        send_message = "\n".join(results)
 
-        # 上方下方判定の処理
-        if than != None and target != None:
-            try:
-                target = int(target)
-            except:
-                target = target.replace(' ', '').replace('　', '').replace('＋', '+').replace('－', '-').replace('−', '-').replace('＊', '*').replace('／', '/').replace('·', '*').replace('・', '*').replace('﹡', '*').replace('⁎', '*').replace('x', '*').replace('×', '*').replace('÷', '/').replace('D', 'd').replace('Ｄ', 'd').replace('ｄ', 'd')
-                if 'd' in target:
+        if len(send_message) > 2000:
+            await interaction.response.send_message(
+                "結果が長すぎます。ロール回数やダイスの個数を減らしてください。"
+            )
+            return
 
-                    index_of_d.clear()
-                    index_of_operator.clear()
-                    list_of_operator.clear()
-                    elements_of_roll.clear()
-                    result_of_roll_show.clear()
-                    result_of_roll_calc.clear()
+        await interaction.response.send_message(send_message)
 
-                    for i in range(len(target)):
-                        if target[i] == 'd':
-                            index_of_d.append(i)
-                        elif target[i] == '+' or target[i] == '-' or target[i] == '*' or target[i] == '/':
-                            index_of_operator.append(i)
-                            list_of_operator.append(target[i])
-                        
-                    if index_of_operator != []:
-                        for i in range(len(index_of_operator)):
-                            if i == 0:
-                                elements_of_roll.append(target[0:index_of_operator[i]])
-                            else:
-                                elements_of_roll.append(target[index_of_operator[i-1]+1:index_of_operator[i]])
-                        elements_of_roll.append(target[index_of_operator[-1]+1:])
-                    else:
-                        elements_of_roll.append(target)
-                    print(elements_of_roll)
-                    for element in elements_of_roll:
-                        if 'd' in element:
-                            num_of_dice = int(element[0:element.index('d')]) if element[0:element.index('d')] != '' else 1
-                            num_of_faces = int(element[element.index('d')+1:])
-                            roll_results = roll_dice(num_of_dice, num_of_faces)
-                            result_of_roll_calc.append(sum(roll_results))
-                        else:
-                            result_of_roll_calc.append(int(element))
-                    print(result_of_roll_calc)
-
-                    calculation_expression = str(result_of_roll_calc[0])
-                    for i in range(len(list_of_operator)):
-                        calculation_expression += f" {list_of_operator[i]} {result_of_roll_calc[i+1]}"
-                    print(calculation_expression)
-                    target = eval(calculation_expression)
-                    print(target)
-
-                else:
-                    target = eval(target)
-
-        if than in ['>', '<', '>=', '<=', '≧', '≦', '=']:
-            if than == '>':
-                if final_result > target:
-                    final_result = f"{final_result} > {target} => 成功"
-                else:
-                    final_result = f"{final_result} > {target} => 失敗"
-            elif than == '<':
-                if final_result < target:
-                    final_result = f"{final_result} < {target} => 成功"
-                else:
-                    final_result = f"{final_result} < {target} => 失敗"
-            elif than =='>=' or than == '≧':
-                if final_result >= target:
-                    final_result = f"{final_result} >= {target} => 成功"
-                else:
-                    final_result = f"{final_result} >= {target} => 失敗"
-            elif than == '<=' or than == '≦':
-                if final_result <= target:
-                    final_result = f"{final_result} <= {target} => 成功"
-                else:
-                    final_result = f"{final_result} <= {target} => 失敗"
-            elif than == '=':
-                if final_result == target:
-                    final_result = f"{final_result} = {target} => 成功"
-                else:
-                    final_result = f"{final_result} = {target} => 失敗"
-
-        # 結果を送信
-        await interaction.response.send_message(f"[{show_message}] => {final_result}")
-
-        # 要素のリセット
-        index_of_d.clear()
-        index_of_operator.clear()
-        list_of_operator.clear()
-        elements_of_roll.clear()
-        result_of_roll_show.clear()
-        result_of_roll_calc.clear()
     except Exception as e:
-        await interaction.response.send_message("ロールコマンドの形式が正しくありません。")
+        await interaction.response.send_message(
+            "ロールコマンドの形式が正しくありません。"
+        )
         print(e)
-
-        # 要素のリセット
-        index_of_d.clear()
-        index_of_operator.clear()
-        list_of_operator.clear()
-        elements_of_roll.clear()
-        result_of_roll_show.clear()
-        result_of_roll_calc.clear()
-
 
 
 # チョイスコマンドの実装
 @tree.command(name="choice_roll", description="神よりせんたくをするぜ")
-@app_commands.describe(choices="選択肢を空白かカンマで区切って入力", times="選択肢を選ぶ回数")
-async def choice_command(interaction: discord.Interaction, choices: str, times: int = 1):
+@app_commands.describe(
+    choices="選択肢を空白かカンマで区切って入力",
+    times="選択肢を選ぶ回数"
+)
+async def choice_command(
+    interaction: discord.Interaction,
+    choices: str,
+    times: int = 1
+):
     if interaction.user.bot:
         return
 
     print("チョイスコマンドが実行されました")
     send_message = ""
+
     try:
         choices_list = choices.split(',')
+
         if len(choices_list) == 1:
             choices_list = choices.split(' ')
         else:
             choices_list = choices.replace(' ', '').split(',')
+
         print(choices_list)
+
         for i in range(times):
             selected_choice = random.choice(choices_list)
             send_message += f"[{selected_choice}] "
-        await interaction.response.send_message(f"{send_message}")
+
+        await interaction.response.send_message(send_message)
+
     except Exception as e:
-        await interaction.response.send_message("選択肢の形式が正しくありません。")
+        await interaction.response.send_message(
+            "選択肢の形式が正しくありません。"
+        )
         print(e)
 
-# @tree.command(name="name_roll", description="give you a name")
-# @app_commands.describe(style="和洋を選択", fol="苗字か名前を選択")
-# async def name_command(interaction: discord.Interaction, style: str = "和", fol: str = "苗字"):
 
-        
 client.run(DISCORD_TOKEN)
-
